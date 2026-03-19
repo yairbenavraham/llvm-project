@@ -225,6 +225,7 @@ add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)
 add_subdirectory(Utils)
 
+# Conflicting DAG patterns and static functions across AMDGPU files.
 set_source_files_properties(
   AMDGPUISelDAGToDAG.cpp
   AMDGPUInstCombineIntrinsic.cpp
@@ -232,6 +233,7 @@ set_source_files_properties(
   AMDGPUSwLowerLDS.cpp
   PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 
+# Generated GISel combiner code with conflicting rule symbols.
 set_source_files_properties(
   AMDGPUInstructionSelector.cpp
   AMDGPUPostLegalizerCombiner.cpp
