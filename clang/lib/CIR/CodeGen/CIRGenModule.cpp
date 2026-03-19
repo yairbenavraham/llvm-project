@@ -149,6 +149,16 @@ CIRGenModule::CIRGenModule(mlir::MLIRContext &mlirContext,
                                                 /*line=*/0,
                                                 /*column=*/0));
   }
+
+  // Set CUDA GPU binary handle.
+  if (langOpts.CUDA) {
+    std::string cudaBinaryName = codeGenOpts.CudaGpuBinaryFileName;
+    if (!cudaBinaryName.empty()) {
+      theModule->setAttr(
+          cir::CIRDialect::getCUDABinaryHandleAttrName(),
+          cir::CUDABinaryHandleAttr::get(&mlirContext, cudaBinaryName));
+    }
+  }
 }
 
 CIRGenModule::~CIRGenModule() = default;

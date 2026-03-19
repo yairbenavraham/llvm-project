@@ -11,6 +11,7 @@ add_clang_library(MLIRCIRTransforms
   LoweringPrepare.cpp
   GotoSolver.cpp
   IdiomRecognizer.cpp
+  CUDARegistrationBuilder.cpp
 
   DEPENDS
   MLIRCIRPassIncGen

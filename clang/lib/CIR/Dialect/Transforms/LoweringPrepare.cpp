@@ -9,6 +9,8 @@
 #include "PassDetail.h"
 #include "mlir/IR/Attributes.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Attrs.inc"
+#include "CUDARegistrationBuilder.h"
 #include "clang/AST/Mangle.h"
 #include "clang/Basic/Module.h"
 #include "clang/Basic/Specifiers.h"
@@ -22,6 +24,7 @@
 #include "clang/CIR/Dialect/Passes.h"
 #include "clang/CIR/Interfaces/ASTAttrInterfaces.h"
 #include "clang/CIR/MissingFeatures.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Path.h"
 
 #include <memory>
@@ -104,6 +107,13 @@ struct LoweringPreparePass
       mlir::Type type,
       cir::GlobalLinkageKind linkage = cir::GlobalLinkageKind::ExternalLinkage,
       cir::VisibilityKind visibility = cir::VisibilityKind::Default);
+
+
+  /// ------------
+  /// CUDA registration related
+  /// ------------
+
+  llvm::StringMap<FuncOp> cudaKernelMap;
 
   /// Handle static local variable initialization with guard variables.
   void handleStaticLocal(cir::GlobalOp globalOp, cir::GetGlobalOp getGlobalOp);
@@ -1596,6 +1606,13 @@ void LoweringPreparePass::runOnOp(mlir::Operation *op) {
       globalCtorList.emplace_back(fnOp.getName(), globalCtor.value());
     else if (auto globalDtor = fnOp.getGlobalDtorPriority())
       globalDtorList.emplace_back(fnOp.getName(), globalDtor.value());
+
+    if(auto attr = fnOp->getAttr(cir::CUDAKernelNameAttr::getMnemonic())){
+      auto kernelNameAttr = dyn_cast<CUDAKernelNameAttr>(attr);
+      std::string kernelName = kernelNameAttr.getKernelName();
+      cudaKernelMap[kernelName] = fnOp;
+    }
+    
   }
 }
 
@@ -1618,6 +1635,14 @@ void LoweringPreparePass::runOnOperation() {
     runOnOp(o);
 
   buildCXXGlobalInitFunc();
+  if (astCtx->getLangOpts().CUDA && !astCtx->getLangOpts().CUDAIsDevice) {
+    cir::CIRDataLayout dataLayout(mlirModule);
+    cir::CIRBaseBuilderTy builder(*mlirModule.getContext());
+    cir::CUDARegistrationBuilder regBuilder(mlirModule, dataLayout, builder,
+                                            *astCtx, cudaKernelMap);
+    regBuilder.build();
+  }
+
   buildGlobalCtorDtorList();
 }
 

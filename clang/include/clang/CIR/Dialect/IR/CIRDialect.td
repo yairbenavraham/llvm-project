@@ -75,6 +75,7 @@ def CIR_Dialect : Dialect {
     static llvm::StringRef getDefaultFuncAttrsAttrName() { return "default_func_attrs"; }
     static llvm::StringRef getResAttrsAttrName() { return "res_attrs"; }
     static llvm::StringRef getArgAttrsAttrName() { return "arg_attrs"; }
+    static llvm::StringRef getCUDABinaryHandleAttrName() { return "cir.cu.binary_handle"; }
 
     void registerAttributes();
     void registerTypes();
