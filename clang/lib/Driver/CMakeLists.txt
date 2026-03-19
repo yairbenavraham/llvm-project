@@ -18,6 +18,11 @@ if(CLANG_USE_XCSELECT)
   set(system_libs xcselect)
 endif()
 
+# Multiple ToolChains/*.cpp files define static functions with the same name
+# (e.g. checkRemarksOptions, getOSLibDir) and use "using namespace driver"
+# which conflicts across translation units in unity builds.
+set(CMAKE_UNITY_BUILD OFF)
+
 add_clang_library(clangDriver
   Action.cpp
   Compilation.cpp
