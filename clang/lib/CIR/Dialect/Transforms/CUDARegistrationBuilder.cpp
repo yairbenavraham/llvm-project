@@ -18,6 +18,7 @@
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
 #include "clang/CIR/MissingFeatures.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 using namespace cir;
 
@@ -35,17 +36,55 @@ static std::string addUnderscoredPrefix(llvm::StringRef cudaPrefix,
   return ("__" + cudaPrefix + cudaFunctionName).str();
 }
 
+std::unique_ptr<llvm::MemoryBuffer> CUDARegistrationBuilder::readGPUBinary() {
+
+  if (isHIP)
+    assert(!cir::MissingFeatures::hipModuleCtor());
+  if (astCtx->getLangOpts().GPURelocatableDeviceCode)
+    llvm_unreachable("NYI");
+
+  mlir::Attribute cudaBinaryHandleAttr =
+      theModule->getAttr(CIRDialect::getCUDABinaryHandleAttrName());
+  if (!cudaBinaryHandleAttr) {
+    if (isHIP) {
+      assert(!cir::MissingFeatures::hipModuleCtor());
+      return {};
+    }
+    return {};
+  }
+
+  std::string cudaGPUBinaryName =
+      mlir::cast<CUDABinaryHandleAttr>(cudaBinaryHandleAttr).getName();
+
+  // TODO: MAC OS X needs special care, but we haven't supported that in CIR
+  // yet.
+
+  // Read the GPU binary and create a constant array for it.
+  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> cudaGPUBinaryOrErr =
+      llvm::MemoryBuffer::getFile(cudaGPUBinaryName);
+  if (std::error_code ec = cudaGPUBinaryOrErr.getError()) {
+    theModule->emitError("cannot open file: " + cudaGPUBinaryName +
+                         ec.message());
+    return {};
+  }
+
+  std::unique_ptr<llvm::MemoryBuffer> cudaGPUBinary =
+      std::move(cudaGPUBinaryOrErr.get());
+
+  return cudaGPUBinary;
+}
+
 CUDARegistrationBuilder::CUDARegistrationBuilder(mlir::ModuleOp &module,
                                                  cir::CIRDataLayout &dataLayout,
-                                                 cir::CIRBaseBuilderTy &builder,
+                                                 cir::CIRBaseBuilderTy &cirBaseBuilder,
                                                 clang::ASTContext& astCtx, llvm::StringMap<cir::FuncOp>& kernelMap)
-    : theModule(module), theDataLayout(dataLayout), builder(builder), cudaKernelMap(kernelMap), astCtx(&astCtx), theLoc(module->getLoc())  {
+    : theModule(module), theDataLayout(dataLayout), builder(cirBaseBuilder), cudaKernelMap(kernelMap), astCtx(&astCtx), theLoc(module->getLoc())  {
 
   // The Types
   voidTy = builder.getVoidTy();
   voidPtrTy = builder.getVoidPtrTy();
   voidPtrPtrTy = builder.getPointerTo(voidPtrTy);
-  intTy = builder.getUIntNTy(32);
+  intTy = builder.getSIntNTy(32);
   charTy = cir::IntType::get(module->getContext(),
                              astCtx.getCharWidth(),
                              /*isSigned=*/false);
@@ -58,51 +97,21 @@ CUDARegistrationBuilder::CUDARegistrationBuilder(mlir::ModuleOp &module,
   
 }
 
-
 void CUDARegistrationBuilder::build() {
-    // TODO: Handle GPU Bin handle I/O
-    buildFatBinGlobals();
-}
-
-void CUDARegistrationBuilder::buildFatBinGlobals() {
-
-  if (isHIP)
-    assert(!cir::MissingFeatures::hipModuleCtor());
-  if (astCtx->getLangOpts().GPURelocatableDeviceCode)
-    llvm_unreachable("NYI");
-
   // No need to generate ctors/dtors if there is no GPU binary.
   if (cudaKernelMap.empty())
     return;
-
-  mlir::Attribute cudaBinaryHandleAttr =
-      theModule->getAttr(CIRDialect::getCUDABinaryHandleAttrName());
-  if (!cudaBinaryHandleAttr) {
-    if (isHIP) {
-      assert(!cir::MissingFeatures::hipModuleCtor());
-      return;
-    }
+  std::unique_ptr<llvm::MemoryBuffer> binary = readGPUBinary();
+  if (!binary)
     return;
-  }
+  buildFatBinGlobals(binary);
 
-  std::string cudaGPUBinaryName =
-      mlir::cast<CUDABinaryHandleAttr>(cudaBinaryHandleAttr).getName();
+  // TODO: kernel and shadow var registration
+  assert(!cir::MissingFeatures::globalRegistration());
+}
 
-  // TODO: MAC OS X needs special care, but we haven't supported that in CIR yet.
-
-  // Read the GPU binary and create a constant array for it.
-  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> cudaGPUBinaryOrErr =
-      llvm::MemoryBuffer::getFile(cudaGPUBinaryName);
-  if (std::error_code ec = cudaGPUBinaryOrErr.getError()) {
-    theModule->emitError("cannot open file: " + cudaGPUBinaryName +
-                         ec.message());
-    return;
-  }
-
-  std::unique_ptr<llvm::MemoryBuffer> cudaGPUBinary =
-      std::move(cudaGPUBinaryOrErr.get());
-
-  // ALL OF THE ABOVE SHOULD BE DEFERRED TO AN IO FUNCTION ============ 
+void CUDARegistrationBuilder::buildFatBinGlobals(
+    std::unique_ptr<llvm::MemoryBuffer> &cudaGPUBinary) {
 
   // The section names are different for MAC OS X.
   llvm::StringRef fatbinConstName =
@@ -112,8 +121,8 @@ void CUDARegistrationBuilder::buildFatBinGlobals() {
       astCtx->getLangOpts().HIP ? ".hipFatBinSegment" : ".nvFatBinSegment";
 
   // Create a global variable with the contents of GPU binary.
-  auto fatbinType =
-      ArrayType::get(theModule.getContext(), charTy, cudaGPUBinary->getBuffer().size());
+  auto fatbinType = ArrayType::get(theModule.getContext(), charTy,
+                                   cudaGPUBinary->getBuffer().size());
 
   // OG gives an empty name to this global constant,
   // which is not allowed in CIR.
@@ -138,10 +147,10 @@ void CUDARegistrationBuilder::buildFatBinGlobals() {
 
   std::string fatbinWrapperName =
       addUnderscoredPrefix(cudaPrefix, "_fatbin_wrapper");
-  GlobalOp fatbinWrapper =
+  fatbinWrapper =
       GlobalOp::create(builder, theLoc, fatbinWrapperName, fatbinWrapperType,
                        /*isConstant=*/true,
-                       /*linkage=*/cir::GlobalLinkageKind::InternalLinkage);
+                       /*linkage=*/cir::GlobalLinkageKind::PrivateLinkage);
   auto magicInit = IntAttr::get(intTy, fatMagic);
   auto versionInit = IntAttr::get(intTy, 1);
   auto fatbinStrSymbol =

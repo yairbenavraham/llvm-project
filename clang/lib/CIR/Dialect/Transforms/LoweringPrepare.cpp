@@ -1636,6 +1636,7 @@ void LoweringPreparePass::runOnOperation() {
 
   buildCXXGlobalInitFunc();
   if (astCtx->getLangOpts().CUDA && !astCtx->getLangOpts().CUDAIsDevice) {
+    // CUDA: Handle registration
     cir::CIRDataLayout dataLayout(mlirModule);
     cir::CIRBaseBuilderTy builder(*mlirModule.getContext());
     cir::CUDARegistrationBuilder regBuilder(mlirModule, dataLayout, builder,

@@ -48,8 +48,9 @@ public:
   bool isHIP, isCUDA;
 
   void build();
-  void buildFatBinGlobals();
+  void buildFatBinGlobals(std::unique_ptr<llvm::MemoryBuffer>& gpuBinary);
   cir::FuncOp getOrCreateRuntimeFunc(llvm::StringRef name, FuncType funcTy);
+  std::unique_ptr<llvm::MemoryBuffer> readGPUBinary();
 };
 
 } // namespace
